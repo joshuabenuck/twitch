@@ -5,7 +5,7 @@ use ggez::event;
 use ggez::{self, graphics, Context, GameResult};
 use image;
 use image_grid;
-use image_grid::grid::{Grid, Tile};
+use image_grid::grid::{Grid, Tile, TileAction};
 use reqwest;
 use rusqlite::{Connection, NO_PARAMS};
 use serde::Deserialize;
@@ -119,6 +119,7 @@ impl Installs {
     }
 }
 
+// TODO: Serialize and load by default
 struct TwitchGame {
     asin: String,
     title: String,
@@ -188,6 +189,10 @@ impl TwitchGame {
 impl Tile for TwitchGame {
     fn image(&self) -> &graphics::Image {
         &self.image.as_ref().unwrap()
+    }
+
+    fn act(&self) -> TileAction {
+        TileAction::Launch(self.launch())
     }
 }
 
@@ -280,12 +285,16 @@ fn main() -> Result<(), Error> {
     let config = dirs::config_dir().unwrap();
     let mut twitch;
     {
+        // TODO: Only load from SQL files when told to do so
+        // Use a cached copy by default
         let products = Products::load(&config)?;
         let installs = Installs::load(&"c:/programdata".into())?;
 
         twitch = Twitch::from(image_folder, &products, &installs);
     }
-    twitch.games.sort_unstable_by_key(|g| g.title.clone());
+    twitch
+        .games
+        .sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
 
     if matches.is_present("launcher") {
         let cb = ggez::ContextBuilder::new("Image Grid", "Joshua Benuck");
