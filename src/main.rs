@@ -1,3 +1,4 @@
+use clap::{App, Arg};
 use dirs;
 use failure::Error;
 use ggez::event;
@@ -7,9 +8,12 @@ use image_grid;
 use image_grid::grid::{Grid, Tile};
 use reqwest;
 use rusqlite::{Connection, NO_PARAMS};
+use serde::Deserialize;
+use serde_json;
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
+use std::process::{Child, Command};
 use url::Url;
 
 #[derive(Debug)]
@@ -96,6 +100,7 @@ impl Installs {
         let mut stmt = install_info.prepare("select * from DbSet;")?;
         let installs = stmt.query_map(NO_PARAMS, |row| {
             Ok(Install {
+                // TODO: Switch to named columns to guard against additions / order changes
                 id: row.get(0)?,
                 install_date: row.get(1)?,
                 install_directory: row.get(2)?,
@@ -124,6 +129,21 @@ struct TwitchGame {
     install_directory: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct FuelCommand {
+    command: String,
+    args: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct Fuel {
+    schema_version: String,
+    post_install: Option<Vec<FuelCommand>>,
+    main: FuelCommand,
+}
+
 impl TwitchGame {
     fn download_img(&self, path: &PathBuf) -> Result<PathBuf, Error> {
         assert!(path.exists(), "Path for image download does not exist!");
@@ -147,6 +167,21 @@ impl TwitchGame {
 
     fn read_img(&self, full_path: &PathBuf) -> Result<Vec<u8>, Error> {
         Ok(fs::read(&full_path)?)
+    }
+
+    fn launch(&self) -> Result<Child, Error> {
+        let install_directory = PathBuf::from(
+            self.install_directory
+                .as_ref()
+                .expect("Unable to launch game"),
+        );
+        let fuel_config = install_directory.join("fuel.json");
+        println!("Parsing launch config file: {}", fuel_config.display());
+        let fuel_file = fs::File::open(fuel_config)?;
+        let fuel: Fuel = serde_json::from_reader(fuel_file)?;
+        let mut launch = Command::new(install_directory.join(&fuel.main.command));
+        launch.args(&fuel.main.args);
+        Ok(launch.spawn()?)
     }
 }
 
@@ -212,30 +247,87 @@ impl Twitch {
 }
 
 fn main() -> Result<(), Error> {
-    let cb = ggez::ContextBuilder::new("Image Grid", "Joshua Benuck");
-    let (mut ctx, mut event_loop) = cb.build()?;
+    let matches = App::new("twitch")
+        .about("Launcher for Twitch Prime games.")
+        .arg(
+            Arg::with_name("launcher")
+                .long("launcher")
+                .help("Display graphical launcher."),
+        )
+        .arg(
+            Arg::with_name("installed")
+                .long("installed")
+                .short("i")
+                .default_value("true")
+                .help("Limit operations to just the installed games."),
+        )
+        .arg(
+            Arg::with_name("list")
+                .long("list")
+                .help("List the known games."),
+        )
+        .arg(
+            Arg::with_name("launch")
+                .long("launch")
+                .short("l")
+                .takes_value(true)
+                .help("Launch the specified game."),
+        )
+        .get_matches();
 
     let home = dirs::home_dir().unwrap();
     let image_folder = home.join(".twitch").join("images");
     let config = dirs::config_dir().unwrap();
-    let products = Products::load(&config)?;
-    let installs = Installs::load(&"c:/programdata".into())?;
+    let mut twitch;
+    {
+        let products = Products::load(&config)?;
+        let installs = Installs::load(&"c:/programdata".into())?;
 
-    let mut twitch = Twitch::from(image_folder, &products, &installs);
-    twitch.load_imgs(&mut ctx)?;
+        twitch = Twitch::from(image_folder, &products, &installs);
+    }
     twitch.games.sort_unstable_by_key(|g| g.title.clone());
 
-    let mut grid = Grid::new(
-        twitch
-            .games
-            .into_iter()
-            .filter(|g| g.installed)
-            .map(|g| Box::new(g) as Box<dyn Tile>)
-            .collect(),
-        200,
-        200,
-    );
-    graphics::set_resizable(&mut ctx, true)?;
-    event::run(&mut ctx, &mut event_loop, &mut grid)?;
+    if matches.is_present("launcher") {
+        let cb = ggez::ContextBuilder::new("Image Grid", "Joshua Benuck");
+        let (mut ctx, mut event_loop) = cb.build()?;
+        twitch.load_imgs(&mut ctx)?;
+        let mut grid = Grid::new(
+            twitch
+                .games
+                .into_iter()
+                .filter(|g| g.installed)
+                .map(|g| Box::new(g) as Box<dyn Tile>)
+                .collect(),
+            200,
+            200,
+        );
+        graphics::set_resizable(&mut ctx, true)?;
+        event::run(&mut ctx, &mut event_loop, &mut grid)?;
+        return Ok(());
+    }
+
+    if matches.is_present("list") {
+        let installed_only = matches.value_of("installed").unwrap().parse::<bool>()?;
+        for game in twitch.games {
+            if installed_only && !game.installed {
+                continue;
+            }
+            println!("{}", game.title);
+        }
+        return Ok(());
+    }
+
+    if let Some(game_to_launch) = matches.value_of("launch") {
+        for game in twitch.games {
+            if game.title == game_to_launch {
+                game.launch()?;
+                return Ok(());
+            }
+        }
+        println!("Unable to find game {}", game_to_launch);
+        return Ok(());
+    }
+
+    println!("Unrecognized command. Run with --help for options.");
     Ok(())
 }
