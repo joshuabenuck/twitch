@@ -8,15 +8,15 @@ use image_grid;
 use image_grid::grid::{Grid, Tile, TileAction};
 use reqwest;
 use rusqlite::{Connection, NO_PARAMS};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command};
 use url::Url;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 struct Product {
     id: String,
     date_time: String,
@@ -74,7 +74,7 @@ impl Products {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize, Serialize)]
 struct Install {
     id: String,
     install_date: String,
@@ -119,15 +119,41 @@ impl Installs {
     }
 }
 
-// TODO: Serialize and load by default
+#[derive(Deserialize, Serialize)]
+struct TwitchDb {
+    products: Vec<Product>,
+    installs: Vec<Install>,
+}
+
+impl TwitchDb {
+    fn open_db(cache_dir: &PathBuf) -> Result<fs::File, Error> {
+        Ok(fs::File::create(cache_dir.join("twitchdb.json"))?)
+    }
+
+    pub fn save(&self, cache_dir: &PathBuf) -> Result<(), Error> {
+        TwitchDb::open_db(cache_dir)?.write(serde_json::to_string(&self)?.as_bytes())?;
+        Ok(())
+    }
+
+    pub fn load(cache_dir: &PathBuf) -> Result<TwitchDb, Error> {
+        Ok(serde_json::from_str(
+            fs::read_to_string(cache_dir.join("twitchdb.json"))?.as_str(),
+        )?)
+    }
+}
+
+#[derive(Deserialize, Serialize)]
 struct TwitchGame {
     asin: String,
     title: String,
+    #[serde(skip)]
     image: Option<graphics::Image>,
     image_path: Option<PathBuf>,
     image_url: String,
     installed: bool,
     install_directory: Option<String>,
+    kids: Option<bool>,
+    players: Option<usize>,
 }
 
 #[derive(Deserialize)]
@@ -202,6 +228,49 @@ struct Twitch {
 }
 
 impl Twitch {
+    fn load(cache_dir: PathBuf) -> Result<Twitch, Error> {
+        let games: Vec<TwitchGame> = serde_json::from_str(
+            fs::read_to_string(cache_dir.join("twitch_games.json"))?.as_str(),
+        )?;
+        let mut twitch = Twitch {
+            games,
+            image_folder: cache_dir.join("images"),
+        };
+        twitch.sort();
+        Ok(twitch)
+    }
+
+    fn save(&self, cache_dir: &PathBuf) -> Result<(), Error> {
+        fs::File::create(cache_dir.join("twitch_games.json"))?
+            .write(serde_json::to_string_pretty(&self.games)?.as_bytes())?;
+        Ok(())
+    }
+
+    fn merge_with(mut self, other: Twitch) -> Twitch {
+        let mut to_add: Vec<TwitchGame> = Vec::new();
+        for orig in other.games.into_iter() {
+            let mut found = false;
+            for custom in &mut self.games {
+                if orig.asin == custom.asin {
+                    found = true;
+                    custom.title = orig.title.clone();
+                    custom.image_url = orig.image_url.clone();
+                    custom.install_directory = orig.install_directory.clone();
+                    custom.installed = orig.installed.clone();
+                }
+            }
+            if !found {
+                to_add.push(orig);
+            }
+        }
+        self.games.extend(to_add);
+        self
+    }
+
+    fn from_db(image_folder: PathBuf, twitch_db: &TwitchDb) -> Twitch {
+        Twitch::from(image_folder, &twitch_db.products, &twitch_db.installs)
+    }
+
     fn from(image_folder: PathBuf, products: &Vec<Product>, installs: &Vec<Install>) -> Twitch {
         let games: Vec<TwitchGame> = products
             .iter()
@@ -225,13 +294,17 @@ impl Twitch {
                     image_path: None,
                     installed,
                     install_directory,
+                    kids: None,
+                    players: None,
                 }
             })
             .collect();
-        Twitch {
+        let mut twitch = Twitch {
             games,
             image_folder,
-        }
+        };
+        twitch.sort();
+        twitch
     }
 
     fn load_imgs(&mut self, ctx: &mut Context) -> Result<&Twitch, Error> {
@@ -248,6 +321,11 @@ impl Twitch {
             )?);
         }
         Ok(self)
+    }
+
+    fn sort(&mut self) {
+        self.games
+            .sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
     }
 }
 
@@ -267,6 +345,11 @@ fn main() -> Result<(), Error> {
                 .help("Limit operations to just the installed games."),
         )
         .arg(
+            Arg::with_name("refresh")
+                .long("refresh")
+                .help("Refresh the list of known games from the Twitch install."),
+        )
+        .arg(
             Arg::with_name("list")
                 .long("list")
                 .help("List the known games."),
@@ -281,30 +364,36 @@ fn main() -> Result<(), Error> {
         .get_matches();
 
     let home = dirs::home_dir().unwrap();
-    let image_folder = home.join(".twitch").join("images");
+    let twitch_cache = home.join(".twitch");
+    let image_folder = twitch_cache.join("images");
     let config = dirs::config_dir().unwrap();
-    let mut twitch;
-    {
-        // TODO: Only load from SQL files when told to do so
-        // Use a cached copy by default
+    let mut twitch = if matches.is_present("refresh") {
         let products = Products::load(&config)?;
         let installs = Installs::load(&"c:/programdata".into())?;
-
-        twitch = Twitch::from(image_folder, &products, &installs);
-    }
-    twitch
-        .games
-        .sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
+        let twitch_db = TwitchDb { products, installs };
+        twitch_db.save(&twitch_cache)?;
+        let twitch = Twitch::load(twitch_cache.clone())?.merge_with(Twitch::from_db(
+            image_folder,
+            &TwitchDb::load(&twitch_cache)?,
+        ));
+        twitch.save(&twitch_cache)?;
+        twitch
+    } else {
+        Twitch::load(twitch_cache.clone())?
+    };
 
     if matches.is_present("launcher") {
         let cb = ggez::ContextBuilder::new("Image Grid", "Joshua Benuck");
         let (mut ctx, mut event_loop) = cb.build()?;
+        // TODO: Add support for downloading of images without loading into textures
         twitch.load_imgs(&mut ctx)?;
+        twitch.save(&twitch_cache)?;
         let mut grid = Grid::new(
             twitch
                 .games
                 .into_iter()
                 .filter(|g| g.installed)
+                .filter(|g| g.kids.unwrap_or(false))
                 .map(|g| Box::new(g) as Box<dyn Tile>)
                 .collect(),
             200,
@@ -337,6 +426,5 @@ fn main() -> Result<(), Error> {
         return Ok(());
     }
 
-    println!("Unrecognized command. Run with --help for options.");
     Ok(())
 }
