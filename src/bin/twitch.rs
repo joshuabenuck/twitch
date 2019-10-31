@@ -4,10 +4,15 @@ use clap::{App, Arg};
 use dirs;
 use failure::Error;
 use ggez::event;
-use ggez::{self, graphics, Context, GameResult};
+use ggez::{
+    self,
+    event::{KeyCode, KeyMods},
+    graphics::{self, Color},
+    Context, GameResult,
+};
 use image;
 use image_grid;
-use image_grid::grid::{Grid, Tile, TileAction};
+use image_grid::grid::{Grid, TileAction, TileHandler};
 use reqwest;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -88,18 +93,9 @@ impl TwitchGame {
     }
 }
 
-impl Tile for TwitchGame {
-    fn image(&self) -> &graphics::Image {
-        &self.image.as_ref().unwrap()
-    }
-
-    fn act(&self) -> TileAction {
-        TileAction::Launch(self.launch())
-    }
-}
-
 struct Twitch {
     games: Vec<TwitchGame>,
+    images: Vec<graphics::Image>,
     image_folder: PathBuf,
 }
 
@@ -110,6 +106,7 @@ impl Twitch {
         )?;
         let mut twitch = Twitch {
             games,
+            images: Vec::new(),
             image_folder: cache_dir.join("images"),
         };
         twitch.sort();
@@ -177,6 +174,7 @@ impl Twitch {
             .collect();
         let mut twitch = Twitch {
             games,
+            images: Vec::new(),
             image_folder,
         };
         twitch.sort();
@@ -189,7 +187,7 @@ impl Twitch {
             let bytes = game.read_img(&game.image_path.as_ref().unwrap())?;
             let image = image::load_from_memory(&bytes)?.to_rgba();
             let (width, height) = image.dimensions();
-            game.image = Some(graphics::Image::from_rgba8(
+            self.images.push(graphics::Image::from_rgba8(
                 ctx,
                 width as u16,
                 height as u16,
@@ -200,8 +198,60 @@ impl Twitch {
     }
 
     fn sort(&mut self) {
+        // TODO: Track indexes rather than sorting in place?
         self.games
             .sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
+        self.images.clear();
+    }
+}
+
+impl TileHandler for Twitch {
+    fn tiles(&self) -> &Vec<graphics::Image> {
+        &self.images
+        /*twitch
+        .games
+        .into_iter()
+        .filter(|g| g.installed)
+        //.filter(|g| g.kids.unwrap_or(false))
+        .map(|g| Box::new(g) as Box<dyn Tile>)
+        .collect(),*/
+    }
+
+    fn act(&self, i: usize) -> TileAction {
+        TileAction::Launch(self.games[i].launch())
+    }
+
+    fn key_down(
+        &mut self,
+        i: usize,
+        keycode: KeyCode,
+        _keymod: KeyMods,
+    ) -> Option<(KeyCode, KeyMods)> {
+        match keycode {
+            KeyCode::K => {
+                self.games[i].kids = Some(true);
+            }
+            KeyCode::D => {
+                self.games[i].kids = Some(false);
+            }
+            KeyCode::U => {
+                self.games[i].kids = None;
+            }
+            _ => return Some((keycode, _keymod)),
+        }
+        None
+    }
+
+    fn highlight_color(&self, i: usize) -> graphics::Color {
+        if let Some(kids) = self.games[i].kids {
+            if kids {
+                return Color::from([0.0, 1.0, 0.0, 1.0]);
+            }
+            // not kids
+            return Color::from([1.0, 0.0, 0.0, 1.0]);
+        }
+        // unknown
+        return Color::from([0.5, 0.5, 0.5, 1.0]);
     }
 }
 
@@ -263,20 +313,10 @@ fn main() -> Result<(), Error> {
         let (mut ctx, mut event_loop) = cb.build()?;
         // TODO: Add support for downloading of images without loading into textures
         twitch.load_imgs(&mut ctx)?;
-        twitch.save(&twitch_cache)?;
-        let mut grid = Grid::new(
-            twitch
-                .games
-                .into_iter()
-                .filter(|g| g.installed)
-                .filter(|g| g.kids.unwrap_or(false))
-                .map(|g| Box::new(g) as Box<dyn Tile>)
-                .collect(),
-            200,
-            200,
-        );
+        let mut grid = Grid::new(Box::new(&mut twitch), 200, 200);
         graphics::set_resizable(&mut ctx, true)?;
         event::run(&mut ctx, &mut event_loop, &mut grid)?;
+        twitch.save(&twitch_cache)?;
         return Ok(());
     }
 
