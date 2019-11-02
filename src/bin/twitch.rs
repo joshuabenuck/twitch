@@ -93,10 +93,23 @@ impl TwitchGame {
     }
 }
 
+#[derive(Copy, Clone)]
+enum DisplayFilter {
+    All,
+    Kids,
+    Dad,
+    NotInterested,
+}
+
 struct Twitch {
     games: Vec<TwitchGame>,
+    display_filter: DisplayFilter,
+    display_installed: Option<bool>,
+    displayed_games: Vec<usize>,
     images: Vec<graphics::Image>,
     image_folder: PathBuf,
+    edit_mode: bool,
+    background_color: Option<graphics::Color>,
 }
 
 impl Twitch {
@@ -108,8 +121,14 @@ impl Twitch {
             games,
             images: Vec::new(),
             image_folder: cache_dir.join("images"),
+            display_filter: DisplayFilter::All,
+            display_installed: None,
+            displayed_games: Vec::new(),
+            edit_mode: false,
+            background_color: None,
         };
         twitch.sort();
+        twitch.update_filter(DisplayFilter::Kids);
         Ok(twitch)
     }
 
@@ -174,11 +193,37 @@ impl Twitch {
             .collect();
         let mut twitch = Twitch {
             games,
+            display_filter: DisplayFilter::All,
+            displayed_games: Vec::new(),
+            display_installed: Some(true),
             images: Vec::new(),
             image_folder,
+            edit_mode: false,
+            background_color: None,
         };
         twitch.sort();
+        twitch.update_filter(DisplayFilter::Kids);
         twitch
+    }
+
+    fn update_filter(&mut self, df: DisplayFilter) {
+        self.display_filter = df;
+        self.displayed_games = self
+            .games
+            .iter()
+            .enumerate()
+            .filter(|(_i, g)| match self.display_installed {
+                Some(value) => g.installed == value,
+                None => true,
+            })
+            .filter(|(_i, g)| match &self.display_filter {
+                DisplayFilter::All => true,
+                DisplayFilter::Dad => !g.kids.unwrap_or(true),
+                DisplayFilter::Kids => g.kids.unwrap_or(false),
+                DisplayFilter::NotInterested => g.kids == None,
+            })
+            .map(|(i, _g)| i)
+            .collect();
     }
 
     fn load_imgs(&mut self, ctx: &mut Context) -> Result<&Twitch, Error> {
@@ -206,8 +251,8 @@ impl Twitch {
 }
 
 impl TileHandler for Twitch {
-    fn tiles(&self) -> &Vec<graphics::Image> {
-        &self.images
+    fn tiles(&self) -> &Vec<usize> {
+        &self.displayed_games
         /*twitch
         .games
         .into_iter()
@@ -215,6 +260,10 @@ impl TileHandler for Twitch {
         //.filter(|g| g.kids.unwrap_or(false))
         .map(|g| Box::new(g) as Box<dyn Tile>)
         .collect(),*/
+    }
+
+    fn tile(&self, i: usize) -> &graphics::Image {
+        &self.images[i]
     }
 
     fn act(&self, i: usize) -> TileAction {
@@ -227,15 +276,57 @@ impl TileHandler for Twitch {
         keycode: KeyCode,
         _keymod: KeyMods,
     ) -> Option<(KeyCode, KeyMods)> {
+        if self.edit_mode {
+            match keycode {
+                KeyCode::K => {
+                    self.games[i].kids = Some(true);
+                    return None;
+                }
+                KeyCode::D => {
+                    self.games[i].kids = Some(false);
+                    return None;
+                }
+                KeyCode::U => {
+                    self.games[i].kids = None;
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        if _keymod.contains(KeyMods::CTRL) && keycode == KeyCode::E {
+            self.edit_mode = !self.edit_mode;
+            self.background_color = None;
+            if self.edit_mode {
+                self.update_filter(DisplayFilter::All);
+                self.background_color = Some(Color::from([0.2, 0.0, 0.2, 1.0]));
+            }
+            return None;
+        };
+
         match keycode {
             KeyCode::K => {
-                self.games[i].kids = Some(true);
+                self.update_filter(DisplayFilter::Kids);
             }
             KeyCode::D => {
-                self.games[i].kids = Some(false);
+                self.update_filter(DisplayFilter::Dad);
             }
             KeyCode::U => {
-                self.games[i].kids = None;
+                self.update_filter(DisplayFilter::NotInterested);
+            }
+            KeyCode::A => {
+                self.update_filter(DisplayFilter::All);
+            }
+            KeyCode::I => {
+                if _keymod.contains(KeyMods::SHIFT) {
+                    self.display_installed = None;
+                } else {
+                    match self.display_installed {
+                        None => self.display_installed = Some(true),
+                        Some(value) => self.display_installed = Some(!value),
+                    }
+                }
+                self.update_filter(self.display_filter);
             }
             _ => return Some((keycode, _keymod)),
         }
@@ -252,6 +343,10 @@ impl TileHandler for Twitch {
         }
         // unknown
         return Color::from([0.5, 0.5, 0.5, 1.0]);
+    }
+
+    fn background_color(&self) -> graphics::Color {
+        self.background_color.unwrap_or([0.1, 0.2, 0.3, 1.0].into())
     }
 }
 
