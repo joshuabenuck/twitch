@@ -3,113 +3,14 @@ extern crate twitch;
 use clap::{App, Arg};
 use dirs;
 use failure::Error;
-use ggez::event;
-use ggez::{
-    self,
-    event::{KeyCode, KeyMods},
-    graphics::{self, Color},
-    Context, GameResult,
-};
-use image;
-use image_grid;
-use image_grid::grid::{Grid, TileAction, TileHandler};
-use reqwest;
-use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Child, Command};
-use twitch::twitch_db::{Install, Product, TwitchDb};
-use url::Url;
-
-#[derive(Deserialize, Serialize)]
-struct TwitchGame {
-    asin: String,
-    title: String,
-    #[serde(skip)]
-    image: Option<graphics::Image>,
-    image_path: Option<PathBuf>,
-    image_url: String,
-    installed: bool,
-    install_directory: Option<String>,
-    kids: Option<bool>,
-    players: Option<usize>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct FuelCommand {
-    command: String,
-    args: Vec<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "PascalCase")]
-struct Fuel {
-    schema_version: String,
-    post_install: Option<Vec<FuelCommand>>,
-    main: FuelCommand,
-}
-
-impl TwitchGame {
-    fn download_img(&self, path: &PathBuf) -> Result<PathBuf, Error> {
-        assert!(path.exists(), "Path for image download does not exist!");
-        let url = Url::parse(&self.image_url).expect("Unable to parse url for image");
-        let filename = url
-            .path_segments()
-            .expect("Unable to segments from image url")
-            .last()
-            .expect("Unable to get filename from image url");
-        let image = path.join(filename);
-        if image.exists() {
-            return Ok(image);
-        }
-        let mut resp = reqwest::get(url.as_str()).expect("Unable to retrieve image from url");
-        assert!(resp.status().is_success());
-        let mut buffer = Vec::new();
-        resp.read_to_end(&mut buffer)?;
-        fs::write(&image, buffer)?;
-        Ok(image)
-    }
-
-    fn read_img(&self, full_path: &PathBuf) -> Result<Vec<u8>, Error> {
-        Ok(fs::read(&full_path)?)
-    }
-
-    fn launch(&self) -> Result<Child, Error> {
-        let install_directory = PathBuf::from(
-            self.install_directory
-                .as_ref()
-                .expect("Unable to launch game"),
-        );
-        let fuel_config = install_directory.join("fuel.json");
-        println!("Parsing launch config file: {}", fuel_config.display());
-        let fuel_file = fs::File::open(fuel_config)?;
-        let fuel: Fuel = serde_json::from_reader(fuel_file)?;
-        let mut launch = Command::new(install_directory.join(&fuel.main.command));
-        launch.args(&fuel.main.args);
-        Ok(launch.spawn()?)
-    }
-}
-
-#[derive(Copy, Clone)]
-enum DisplayFilter {
-    All,
-    Kids,
-    Dad,
-    NotInterested,
-}
+use twitch::{TwitchDb, TwitchGame};
 
 struct Twitch {
     games: Vec<TwitchGame>,
-    display_filter: DisplayFilter,
-    display_installed: Option<bool>,
-    displayed_games: Vec<usize>,
-    images: Vec<graphics::Image>,
-    image_folder: PathBuf,
-    edit_mode: bool,
-    background_color: Option<graphics::Color>,
 }
 
 impl Twitch {
@@ -117,18 +18,7 @@ impl Twitch {
         let games: Vec<TwitchGame> = serde_json::from_str(
             fs::read_to_string(cache_dir.join("twitch_games.json"))?.as_str(),
         )?;
-        let mut twitch = Twitch {
-            games,
-            images: Vec::new(),
-            image_folder: cache_dir.join("images"),
-            display_filter: DisplayFilter::All,
-            display_installed: None,
-            displayed_games: Vec::new(),
-            edit_mode: false,
-            background_color: None,
-        };
-        twitch.sort();
-        twitch.update_filter(DisplayFilter::Kids);
+        let mut twitch = Twitch { games };
         Ok(twitch)
     }
 
@@ -158,206 +48,11 @@ impl Twitch {
         self.games.extend(to_add);
         self
     }
-
-    fn from_db(image_folder: PathBuf, twitch_db: &TwitchDb) -> Twitch {
-        Twitch::from(image_folder, &twitch_db.products, &twitch_db.installs)
-    }
-
-    fn from(image_folder: PathBuf, products: &Vec<Product>, installs: &Vec<Install>) -> Twitch {
-        let games: Vec<TwitchGame> = products
-            .iter()
-            .map(|p| {
-                let mut installed = false;
-                let mut install_directory = None;
-                let install_record: Vec<&Install> = installs
-                    .iter()
-                    .filter(|i| i.product_asin == p.product_asin)
-                    .collect();
-                if install_record.len() == 1 {
-                    let install_record = install_record[0];
-                    installed = install_record.installed == 1;
-                    install_directory = Some(install_record.install_directory.clone());
-                }
-                TwitchGame {
-                    asin: p.product_asin.clone(),
-                    title: p.product_title.clone(),
-                    image: None,
-                    image_url: p.product_icon_url.clone(),
-                    image_path: None,
-                    installed,
-                    install_directory,
-                    kids: None,
-                    players: None,
-                }
-            })
-            .collect();
-        let mut twitch = Twitch {
-            games,
-            display_filter: DisplayFilter::All,
-            displayed_games: Vec::new(),
-            display_installed: Some(true),
-            images: Vec::new(),
-            image_folder,
-            edit_mode: false,
-            background_color: None,
-        };
-        twitch.sort();
-        twitch.update_filter(DisplayFilter::Kids);
-        twitch
-    }
-
-    fn update_filter(&mut self, df: DisplayFilter) {
-        self.display_filter = df;
-        self.displayed_games = self
-            .games
-            .iter()
-            .enumerate()
-            .filter(|(_i, g)| match self.display_installed {
-                Some(value) => g.installed == value,
-                None => true,
-            })
-            .filter(|(_i, g)| match &self.display_filter {
-                DisplayFilter::All => true,
-                DisplayFilter::Dad => !g.kids.unwrap_or(true),
-                DisplayFilter::Kids => g.kids.unwrap_or(false),
-                DisplayFilter::NotInterested => g.kids == None,
-            })
-            .map(|(i, _g)| i)
-            .collect();
-    }
-
-    fn load_imgs(&mut self, ctx: &mut Context) -> Result<&Twitch, Error> {
-        for game in &mut self.games {
-            game.image_path = Some(game.download_img(&self.image_folder).unwrap());
-            let bytes = game.read_img(&game.image_path.as_ref().unwrap())?;
-            let image = image::load_from_memory(&bytes)?.to_rgba();
-            let (width, height) = image.dimensions();
-            self.images.push(graphics::Image::from_rgba8(
-                ctx,
-                width as u16,
-                height as u16,
-                &image,
-            )?);
-        }
-        Ok(self)
-    }
-
-    fn sort(&mut self) {
-        // TODO: Track indexes rather than sorting in place?
-        self.games
-            .sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
-        self.images.clear();
-    }
-}
-
-impl TileHandler for Twitch {
-    fn tiles(&self) -> &Vec<usize> {
-        &self.displayed_games
-        /*twitch
-        .games
-        .into_iter()
-        .filter(|g| g.installed)
-        //.filter(|g| g.kids.unwrap_or(false))
-        .map(|g| Box::new(g) as Box<dyn Tile>)
-        .collect(),*/
-    }
-
-    fn tile(&self, i: usize) -> &graphics::Image {
-        &self.images[i]
-    }
-
-    fn act(&self, i: usize) -> TileAction {
-        TileAction::Launch(self.games[i].launch())
-    }
-
-    fn key_down(
-        &mut self,
-        i: usize,
-        keycode: KeyCode,
-        _keymod: KeyMods,
-    ) -> Option<(KeyCode, KeyMods)> {
-        if self.edit_mode {
-            match keycode {
-                KeyCode::K => {
-                    self.games[i].kids = Some(true);
-                    return None;
-                }
-                KeyCode::D => {
-                    self.games[i].kids = Some(false);
-                    return None;
-                }
-                KeyCode::U => {
-                    self.games[i].kids = None;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-
-        if _keymod.contains(KeyMods::CTRL) && keycode == KeyCode::E {
-            self.edit_mode = !self.edit_mode;
-            self.background_color = None;
-            if self.edit_mode {
-                self.update_filter(DisplayFilter::All);
-                self.background_color = Some(Color::from([0.2, 0.0, 0.2, 1.0]));
-            }
-            return None;
-        };
-
-        match keycode {
-            KeyCode::K => {
-                self.update_filter(DisplayFilter::Kids);
-            }
-            KeyCode::D => {
-                self.update_filter(DisplayFilter::Dad);
-            }
-            KeyCode::U => {
-                self.update_filter(DisplayFilter::NotInterested);
-            }
-            KeyCode::A => {
-                self.update_filter(DisplayFilter::All);
-            }
-            KeyCode::I => {
-                if _keymod.contains(KeyMods::SHIFT) {
-                    self.display_installed = None;
-                } else {
-                    match self.display_installed {
-                        None => self.display_installed = Some(true),
-                        Some(value) => self.display_installed = Some(!value),
-                    }
-                }
-                self.update_filter(self.display_filter);
-            }
-            _ => return Some((keycode, _keymod)),
-        }
-        None
-    }
-
-    fn highlight_color(&self, i: usize) -> graphics::Color {
-        if let Some(kids) = self.games[i].kids {
-            if kids {
-                return Color::from([0.0, 1.0, 0.0, 1.0]);
-            }
-            // not kids
-            return Color::from([1.0, 0.0, 0.0, 1.0]);
-        }
-        // unknown
-        return Color::from([0.5, 0.5, 0.5, 1.0]);
-    }
-
-    fn background_color(&self) -> graphics::Color {
-        self.background_color.unwrap_or([0.1, 0.2, 0.3, 1.0].into())
-    }
 }
 
 fn main() -> Result<(), Error> {
     let matches = App::new("twitch")
         .about("Launcher for Twitch Prime games.")
-        .arg(
-            Arg::with_name("launcher")
-                .long("launcher")
-                .help("Display graphical launcher."),
-        )
         .arg(
             Arg::with_name("installed")
                 .long("installed")
@@ -388,36 +83,18 @@ fn main() -> Result<(), Error> {
     let twitch_cache = home.join(".twitch");
     let image_folder = twitch_cache.join("images");
     let config = dirs::config_dir().unwrap();
-    let mut twitch = if matches.is_present("refresh") {
+    let mut games = {
         let products = TwitchDb::load_products(&config)?;
         let installs = TwitchDb::load_installs(&"c:/programdata".into())?;
         let twitch_db = TwitchDb { products, installs };
         twitch_db.save(&twitch_cache)?;
-        let twitch = Twitch::load(twitch_cache.clone())?.merge_with(Twitch::from_db(
-            image_folder,
-            &TwitchDb::load(&twitch_cache)?,
-        ));
-        twitch.save(&twitch_cache)?;
-        twitch
-    } else {
-        Twitch::load(twitch_cache.clone())?
+        let games = TwitchGame::from_db(&TwitchDb::load(&twitch_cache)?)?;
+        games
     };
-
-    if matches.is_present("launcher") {
-        let cb = ggez::ContextBuilder::new("Image Grid", "Joshua Benuck");
-        let (mut ctx, mut event_loop) = cb.build()?;
-        // TODO: Add support for downloading of images without loading into textures
-        twitch.load_imgs(&mut ctx)?;
-        let mut grid = Grid::new(Box::new(&mut twitch), 200, 200);
-        graphics::set_resizable(&mut ctx, true)?;
-        event::run(&mut ctx, &mut event_loop, &mut grid)?;
-        twitch.save(&twitch_cache)?;
-        return Ok(());
-    }
 
     if matches.is_present("list") {
         let installed_only = matches.value_of("installed").unwrap().parse::<bool>()?;
-        for game in twitch.games {
+        for game in &games {
             if installed_only && !game.installed {
                 continue;
             }
@@ -427,7 +104,7 @@ fn main() -> Result<(), Error> {
     }
 
     if let Some(game_to_launch) = matches.value_of("launch") {
-        for game in twitch.games {
+        for game in &games {
             if game.title == game_to_launch {
                 game.launch()?;
                 return Ok(());
