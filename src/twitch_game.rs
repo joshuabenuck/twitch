@@ -63,7 +63,7 @@ impl TwitchGame {
                             .expect("Unable to find game launch command"),
                     );
                     let fuel_config = install_directory.join("fuel.json");
-                    println!("Parsing launch config file: {}", fuel_config.display());
+                    eprintln!("Parsing launch config file: {}", fuel_config.display());
                     let fuel_file = fs::File::open(fuel_config).unwrap();
                     let fuel: Fuel = serde_json::from_reader(fuel_file).unwrap();
                     command = Some(

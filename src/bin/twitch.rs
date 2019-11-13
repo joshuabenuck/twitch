@@ -7,6 +7,7 @@ use serde_json;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::str::FromStr;
 use twitch::{TwitchDb, TwitchGame};
 
 struct Twitch {
@@ -57,7 +58,7 @@ fn main() -> Result<(), Error> {
             Arg::with_name("installed")
                 .long("installed")
                 .short("i")
-                .default_value("true")
+                .takes_value(true)
                 .help("Limit operations to just the installed games."),
         )
         .arg(
@@ -69,6 +70,11 @@ fn main() -> Result<(), Error> {
             Arg::with_name("list")
                 .long("list")
                 .help("List the known games."),
+        )
+        .arg(
+            Arg::with_name("json")
+                .long("json")
+                .help("Output data in json format"),
         )
         .arg(
             Arg::with_name("launch")
@@ -93,12 +99,19 @@ fn main() -> Result<(), Error> {
     };
 
     if matches.is_present("list") {
-        let installed_only = matches.value_of("installed").unwrap().parse::<bool>()?;
-        for game in &games {
-            if installed_only && !game.installed {
-                continue;
+        if let Some(installed) = matches.value_of("installed") {
+            let installed = bool::from_str(installed)?;
+            games = games
+                .into_iter()
+                .filter(|g| g.installed == installed)
+                .collect();
+        }
+        if matches.is_present("json") {
+            println!("{}", serde_json::to_string(&games)?);
+        } else {
+            for game in &games {
+                println!("{}", game.title);
             }
-            println!("{}", game.title);
         }
         return Ok(());
     }
