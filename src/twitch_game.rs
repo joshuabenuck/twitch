@@ -72,13 +72,11 @@ impl TwitchGame {
                     let fuel_file = fs::File::open(fuel_config).unwrap();
                     let fuel: Fuel = serde_json::from_reader(fuel_file).unwrap();
                     if fuel.main.client_id.is_some() {
-                        println!("Using launch_url");
                         launch_url = Some(format!(
                             "twitch://fuel-launch/{}",
                             game_id.to_str().unwrap()
                         ));
                     } else {
-                        println!("Using command");
                         command = Some(
                             install_directory
                                 .join(&fuel.main.command)
@@ -122,18 +120,38 @@ impl TwitchGame {
     }
 
     pub fn launch(&self) -> Result<Child, Error> {
-        let install_directory = PathBuf::from(
-            self.install_directory
-                .as_ref()
-                .expect("Unable to launch game"),
+        println!(
+            "Launching {:?} {:?} {:?} {:?} {:?}",
+            self.install_directory,
+            self.working_subdir_override,
+            self.command,
+            self.args,
+            self.launch_url
         );
-        if self.command.is_none() {
-            return Err(err_msg(format!("Unable to launch game {}", self.title)));
+        if self.install_directory.is_some() && self.command.is_some() {
+            let install_directory = PathBuf::from(
+                self.install_directory
+                    .as_ref()
+                    .expect("Unable to launch game"),
+            );
+            let full_command =
+                PathBuf::from(install_directory.join(self.command.as_ref().unwrap()));
+            let mut launch = Command::new(&full_command);
+            if self.working_subdir_override.is_some() {
+                launch.current_dir(
+                    install_directory.join(self.working_subdir_override.as_ref().unwrap()),
+                );
+            } else {
+                launch.current_dir(install_directory);
+            }
+            launch.args(self.args.as_ref().unwrap());
+            return Ok(launch.spawn()?);
         }
-        let mut launch = Command::new(install_directory.join(self.command.as_ref().unwrap()));
-        if let Some(args) = &self.args {
-            launch.args(args);
+        if self.launch_url.is_some() {
+            let mut launch = Command::new("cmd");
+            launch.args(&["/C", "start", self.launch_url.as_ref().unwrap()]);
+            return Ok(launch.spawn()?);
         }
-        Ok(launch.spawn()?)
+        Err(err_msg("Unable to launch: Missing launch_url or command"))
     }
 }
