@@ -17,6 +17,7 @@ pub struct TwitchGame {
     pub working_subdir_override: Option<String>,
     pub command: Option<String>,
     pub args: Option<Vec<String>>,
+    pub launch_url: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +26,8 @@ struct FuelCommand {
     working_subdir_override: Option<String>,
     command: String,
     args: Option<Vec<String>>,
+    auth_scopes: Option<Vec<String>>,
+    client_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -54,6 +57,7 @@ impl TwitchGame {
                     install_directory = Some(install_record.install_directory.clone());
                 }
                 let mut working_subdir_override = None;
+                let mut launch_url = None;
                 let mut command: Option<String> = None;
                 let mut args = None;
                 if installed {
@@ -62,20 +66,30 @@ impl TwitchGame {
                             .as_ref()
                             .expect("Unable to find game launch command"),
                     );
+                    let game_id = install_directory.file_stem().unwrap();
                     let fuel_config = install_directory.join("fuel.json");
                     eprintln!("Parsing launch config file: {}", fuel_config.display());
                     let fuel_file = fs::File::open(fuel_config).unwrap();
                     let fuel: Fuel = serde_json::from_reader(fuel_file).unwrap();
-                    command = Some(
-                        install_directory
-                            .join(&fuel.main.command)
-                            .to_str()
-                            .unwrap()
-                            .to_owned(),
-                    );
-                    args = fuel.main.args;
-                    if fuel.main.working_subdir_override.is_some() {
-                        working_subdir_override = fuel.main.working_subdir_override;
+                    if fuel.main.client_id.is_some() {
+                        println!("Using launch_url");
+                        launch_url = Some(format!(
+                            "twitch://fuel-launch/{}",
+                            game_id.to_str().unwrap()
+                        ));
+                    } else {
+                        println!("Using command");
+                        command = Some(
+                            install_directory
+                                .join(&fuel.main.command)
+                                .to_str()
+                                .unwrap()
+                                .to_owned(),
+                        );
+                        args = fuel.main.args;
+                        if fuel.main.working_subdir_override.is_some() {
+                            working_subdir_override = fuel.main.working_subdir_override;
+                        }
                     }
                 }
                 TwitchGame {
@@ -86,6 +100,7 @@ impl TwitchGame {
                     install_directory,
                     command,
                     args,
+                    launch_url,
                     working_subdir_override,
                 }
             })
