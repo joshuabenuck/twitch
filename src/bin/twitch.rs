@@ -2,56 +2,12 @@ extern crate twitch;
 
 use clap::{App, Arg};
 use dirs;
-use env_logger::init;
+use env_logger;
 use failure::Error;
 use serde_json;
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
 use std::process::exit;
 use std::str::FromStr;
 use twitch::{TwitchDb, TwitchGame};
-
-struct Twitch {
-    games: Vec<TwitchGame>,
-}
-
-impl Twitch {
-    fn load(cache_dir: PathBuf) -> Result<Twitch, Error> {
-        let games: Vec<TwitchGame> = serde_json::from_str(
-            fs::read_to_string(cache_dir.join("twitch_games.json"))?.as_str(),
-        )?;
-        let mut twitch = Twitch { games };
-        Ok(twitch)
-    }
-
-    fn save(&self, cache_dir: &PathBuf) -> Result<(), Error> {
-        fs::File::create(cache_dir.join("twitch_games.json"))?
-            .write(serde_json::to_string_pretty(&self.games)?.as_bytes())?;
-        Ok(())
-    }
-
-    fn merge_with(mut self, other: Twitch) -> Twitch {
-        let mut to_add: Vec<TwitchGame> = Vec::new();
-        for orig in other.games.into_iter() {
-            let mut found = false;
-            for custom in &mut self.games {
-                if orig.asin == custom.asin {
-                    found = true;
-                    custom.title = orig.title.clone();
-                    custom.image_url = orig.image_url.clone();
-                    custom.install_directory = orig.install_directory.clone();
-                    custom.installed = orig.installed.clone();
-                }
-            }
-            if !found {
-                to_add.push(orig);
-            }
-        }
-        self.games.extend(to_add);
-        self
-    }
-}
 
 fn main() -> Result<(), Error> {
     env_logger::init();
@@ -90,7 +46,6 @@ fn main() -> Result<(), Error> {
 
     let home = dirs::home_dir().unwrap();
     let twitch_cache = home.join(".twitch");
-    let image_folder = twitch_cache.join("images");
     let config = dirs::config_dir().unwrap();
     // TODO: Put cache file path in a central location.
     if matches.is_present("refresh") || !twitch_cache.join("twitchdb.json").exists() {
