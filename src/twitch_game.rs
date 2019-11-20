@@ -1,5 +1,6 @@
 use crate::twitch_db::{Install, Product, TwitchDb};
 use failure::{err_msg, Error};
+use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
@@ -68,7 +69,7 @@ impl TwitchGame {
                     );
                     let game_id = install_directory.file_stem().unwrap();
                     let fuel_config = install_directory.join("fuel.json");
-                    eprintln!("Parsing launch config file: {}", fuel_config.display());
+                    debug!("Parsing launch config file: {}", fuel_config.display());
                     let fuel_file = fs::File::open(fuel_config).unwrap();
                     let fuel: Fuel = serde_json::from_reader(fuel_file).unwrap();
                     if fuel.main.client_id.is_some() {
@@ -120,7 +121,7 @@ impl TwitchGame {
     }
 
     pub fn launch(&self) -> Result<Child, Error> {
-        println!(
+        debug!(
             "Launching {:?} {:?} {:?} {:?} {:?}",
             self.install_directory,
             self.working_subdir_override,

@@ -18,9 +18,8 @@ url = "*"
 failure = "*"
 serde = "*"
 serde_json = "*"
-image = "*"
-ggez = "*"
-image_grid = { path = "../image_grid" }
+log = "*"
+env_logger = "*"
 
 [dependencies.rusqlite]
 version = "0.20.0"

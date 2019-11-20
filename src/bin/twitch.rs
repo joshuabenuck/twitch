@@ -2,11 +2,13 @@ extern crate twitch;
 
 use clap::{App, Arg};
 use dirs;
+use env_logger::init;
 use failure::Error;
 use serde_json;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
+use std::process::exit;
 use std::str::FromStr;
 use twitch::{TwitchDb, TwitchGame};
 
@@ -52,6 +54,7 @@ impl Twitch {
 }
 
 fn main() -> Result<(), Error> {
+    env_logger::init();
     let matches = App::new("twitch")
         .about("Launcher for Twitch Prime games.")
         .arg(
@@ -89,14 +92,16 @@ fn main() -> Result<(), Error> {
     let twitch_cache = home.join(".twitch");
     let image_folder = twitch_cache.join("images");
     let config = dirs::config_dir().unwrap();
-    let mut games = {
+    // TODO: Put cache file path in a central location.
+    if matches.is_present("refresh") || !twitch_cache.join("twitchdb.json").exists() {
+        println!("Refreshing Twitch game cache...");
         let products = TwitchDb::load_products(&config)?;
         let installs = TwitchDb::load_installs(&"c:/programdata".into())?;
         let twitch_db = TwitchDb { products, installs };
         twitch_db.save(&twitch_cache)?;
-        let games = TwitchGame::from_db(&TwitchDb::load(&twitch_cache)?)?;
-        games
-    };
+    }
+    let mut games = TwitchGame::from_db(&TwitchDb::load(&twitch_cache)?)?;
+    games.sort_unstable_by(|e1, e2| e1.title.cmp(&e2.title));
 
     if matches.is_present("list") {
         if let Some(installed) = matches.value_of("installed") {
@@ -123,8 +128,8 @@ fn main() -> Result<(), Error> {
                 return Ok(());
             }
         }
-        println!("Unable to find game {}", game_to_launch);
-        return Ok(());
+        eprintln!("Unable to find game {}", game_to_launch);
+        exit(1);
     }
 
     Ok(())
