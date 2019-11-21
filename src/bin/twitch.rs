@@ -9,7 +9,7 @@ use std::process::exit;
 use std::str::FromStr;
 use twitch::{TwitchDb, TwitchGame};
 
-fn main() -> Result<(), Error> {
+fn run() -> Result<(), Error> {
     env_logger::init();
     let matches = App::new("twitch")
         .about("Launcher for Twitch Prime games.")
@@ -88,4 +88,14 @@ fn main() -> Result<(), Error> {
     }
 
     Ok(())
+}
+
+fn main() {
+    match run() {
+        Ok(_) => (),
+        Err(err) => {
+            eprintln!("{}", err);
+            exit(1);
+        }
+    }
 }

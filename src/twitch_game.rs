@@ -1,10 +1,9 @@
-use crate::twitch_db::{Install, Product, TwitchDb};
+use crate::twitch_db::{Install, TwitchDb};
 use failure::{err_msg, Error};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command};
 
@@ -23,6 +22,7 @@ pub struct TwitchGame {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct FuelCommand {
     working_subdir_override: Option<String>,
     command: String,
@@ -33,6 +33,7 @@ struct FuelCommand {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "PascalCase")]
+#[allow(dead_code)]
 struct Fuel {
     schema_version: String,
     post_install: Option<Vec<FuelCommand>>,
@@ -105,19 +106,6 @@ impl TwitchGame {
             })
             .collect();
         Ok(games)
-    }
-
-    fn load(cache_dir: PathBuf) -> Result<Vec<TwitchGame>, Error> {
-        let games: Vec<TwitchGame> = serde_json::from_str(
-            fs::read_to_string(cache_dir.join("twitch_games.json"))?.as_str(),
-        )?;
-        Ok(games)
-    }
-
-    fn save(cache_dir: &PathBuf, games: &Vec<TwitchGame>) -> Result<(), Error> {
-        fs::File::create(cache_dir.join("twitch_games.json"))?
-            .write(serde_json::to_string_pretty(games)?.as_bytes())?;
-        Ok(())
     }
 
     pub fn launch(&self) -> Result<Child, Error> {

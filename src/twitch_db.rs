@@ -1,8 +1,8 @@
-use failure::Error;
+use failure::{err_msg, Error};
 use rusqlite::{Connection, NO_PARAMS};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -68,8 +68,13 @@ impl TwitchDb {
     }
 
     pub fn load_products(config: &PathBuf) -> Result<Vec<Product>, Error> {
-        let product_info_db: PathBuf = config.join("Twitch/Games/Sql/GameProductInfo.sqlite");
-        assert!(product_info_db.exists());
+        let product_info_db: PathBuf = config.join(r"Twitch\Games\Sql\GameProductInfo.sqlite");
+        if !product_info_db.exists() {
+            return Err(err_msg(format!(
+                "Product info missing: {}",
+                &product_info_db.display()
+            )));
+        }
         let product_info = Connection::open(product_info_db)?;
         let mut stmt = product_info.prepare("select * from DbSet;")?;
         let products = stmt.query_map(NO_PARAMS, |row| {
@@ -98,8 +103,14 @@ impl TwitchDb {
     }
 
     pub fn load_installs(program_data: &PathBuf) -> Result<Vec<Install>, Error> {
-        let install_info_db: PathBuf = program_data.join("Twitch/Games/Sql/GameInstallInfo.sqlite");
-        assert!(install_info_db.exists());
+        let install_info_db: PathBuf =
+            program_data.join(r"Twitch\Games\Sql\GameInstallInfo.sqlite");
+        if !install_info_db.exists() {
+            return Err(err_msg(format!(
+                "Install info missing: {}",
+                &install_info_db.display()
+            )));
+        }
         let install_info = Connection::open(install_info_db)?;
         let mut stmt = install_info.prepare("select * from DbSet;")?;
         let installs = stmt.query_map(NO_PARAMS, |row| {
