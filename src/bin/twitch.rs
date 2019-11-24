@@ -91,6 +91,11 @@ fn run() -> Result<(), Error> {
 }
 
 fn main() {
+    #[cfg(target_family = "unix")]
+    {
+        eprintln!("ERROR: This utility only works on Windows!");
+        exit(1);
+    }
     match run() {
         Ok(_) => (),
         Err(err) => {
