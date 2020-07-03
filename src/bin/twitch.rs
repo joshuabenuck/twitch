@@ -1,9 +1,9 @@
 extern crate twitch;
 
+use anyhow::Error;
 use clap::{App, Arg};
 use dirs;
 use env_logger;
-use failure::Error;
 use serde_json;
 use std::process::exit;
 use std::str::FromStr;

@@ -1,5 +1,5 @@
 use crate::twitch_db::{Install, TwitchDb};
-use failure::{err_msg, Error};
+use anyhow::{anyhow, Error};
 use log::debug;
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -141,6 +141,6 @@ impl TwitchGame {
             launch.args(&["/C", "start", self.launch_url.as_ref().unwrap()]);
             return Ok(launch.spawn()?);
         }
-        Err(err_msg("Unable to launch: Missing launch_url or command"))
+        Err(anyhow!("Unable to launch: Missing launch_url or command"))
     }
 }

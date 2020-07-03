@@ -15,11 +15,11 @@ clap = "*"
 reqwest = "*"
 dirs = "*"
 url = "*"
-failure = "*"
 serde = "*"
 serde_json = "*"
 log = "*"
 env_logger = "*"
+anyhow = "1.0.31"
 
 [dependencies.rusqlite]
 version = "0.20.0"

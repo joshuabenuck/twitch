@@ -1,4 +1,4 @@
-use failure::{err_msg, Error};
+use anyhow::{anyhow, Error};
 use rusqlite::{Connection, NO_PARAMS};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -70,10 +70,10 @@ impl TwitchDb {
     pub fn load_products(config: &PathBuf) -> Result<Vec<Product>, Error> {
         let product_info_db: PathBuf = config.join(r"Twitch\Games\Sql\GameProductInfo.sqlite");
         if !product_info_db.exists() {
-            return Err(err_msg(format!(
+            return Err(anyhow!(
                 "Product info missing: {}",
                 &product_info_db.display()
-            )));
+            ));
         }
         let product_info = Connection::open(product_info_db)?;
         let mut stmt = product_info.prepare("select * from DbSet;")?;
@@ -106,10 +106,10 @@ impl TwitchDb {
         let install_info_db: PathBuf =
             program_data.join(r"Twitch\Games\Sql\GameInstallInfo.sqlite");
         if !install_info_db.exists() {
-            return Err(err_msg(format!(
+            return Err(anyhow!(
                 "Install info missing: {}",
                 &install_info_db.display()
-            )));
+            ));
         }
         let install_info = Connection::open(install_info_db)?;
         let mut stmt = install_info.prepare("select * from DbSet;")?;
