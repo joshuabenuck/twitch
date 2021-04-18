@@ -9,7 +9,7 @@ use std::path::PathBuf;
 pub struct Product {
     pub id: String,
     pub date_time: String,
-    pub background: String,
+    pub background: Option<String>,
     pub background2: String,
     pub is_developer: isize,
     pub product_asin: String,
@@ -77,7 +77,7 @@ impl TwitchDb {
         }
         let product_info = Connection::open(product_info_db)?;
         let mut stmt = product_info.prepare("select * from DbSet;")?;
-        let products = stmt.query_map(NO_PARAMS, |row| {
+        let product_records = stmt.query_map(NO_PARAMS, |row| {
             Ok(Product {
                 id: row.get(0)?,
                 date_time: row.get(1)?,
@@ -99,7 +99,21 @@ impl TwitchDb {
                 videos_json: row.get(17)?,
             })
         })?;
-        Ok(products.into_iter().filter_map(Result::ok).collect())
+        let mut products = Vec::new();
+        let mut errors_found = false;
+        for product in product_records {
+            match product {
+                Ok(product) => products.push(product),
+                Err(error) => {
+                    println!("Error: {}", error);
+                    errors_found = true;
+                }
+            }
+        }
+        if errors_found {
+            return Err(anyhow!("Errors encountered reading product records!"));
+        }
+        return Ok(products);
     }
 
     pub fn load_installs(program_data: &PathBuf) -> Result<Vec<Install>, Error> {
